@@ -1,0 +1,7 @@
+# Raw corpus excluded from the public repo (contains Scopus-sourced abstracts)
+Total_Paper_List.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
