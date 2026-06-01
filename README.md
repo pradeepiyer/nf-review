@@ -17,6 +17,28 @@ The raw input corpus (`Total_Paper_List.csv`) is **not** included: it contains
 Scopus-sourced abstracts that cannot be redistributed publicly. Place your own copy in the
 repo root to reproduce the outputs.
 
+## Data
+
+To reproduce the score CSVs you supply your own `Total_Paper_List.csv` in the repo root (it is
+gitignored, so it will never be committed). Export it from Scopus (or any source with the same
+fields) as a UTF-8 CSV with this header row:
+
+```
+Corpus ID,Authors,Year,Title,Abstract,Keywords,Source,DOI,Document Type,Database
+```
+
+Notes:
+
+- Only `Title`, `Abstract`, `Keywords`, `Year`, and `DOI` affect scoring and dedup; the other
+  columns are carried through to the output for reference.
+- Abstracts may contain embedded newlines — keep them properly quoted so a CSV parser reads
+  one record per paper (the script uses Python's `csv` module, which handles this).
+- An abstract of `[No abstract available]` is treated as empty.
+- Missing `Abstract`/`Keywords` are fine; the paper is still scored on whatever text is present.
+
+Then run the scorer (see **Running** below) to regenerate `paper_scores_ranked.csv` and
+`top_100.csv`.
+
 ## Method
 
 **Deduplication.** Rows are first deduplicated by normalized `(Title, Year)`, then collapsed
