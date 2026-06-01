@@ -12,6 +12,8 @@ the most relevant papers rise to the top.
 | `Terms.csv` | Controlled vocabulary: `Term, Category` (categories: DSD, LSD, PSD, MSD). |
 | `paper_scores_ranked.csv` | All deduplicated papers, ranked by score. |
 | `top_100.csv` | The top 100 papers (change `TOP_N` in the script for a different cut). |
+| `sample_papers.csv` | A 50-row sanitized sample of the input corpus (abstracts removed) showing the expected format. |
+| `make_sample.py` | How `sample_papers.csv` was derived from the full corpus. |
 
 The raw input corpus (`Total_Paper_List.csv`) is **not** included: it contains
 Scopus-sourced abstracts that cannot be redistributed publicly. Place your own copy in the
@@ -38,6 +40,10 @@ Notes:
 
 Then run the scorer (see **Running** below) to regenerate `paper_scores_ranked.csv` and
 `top_100.csv`.
+
+`sample_papers.csv` is a 50-row sanitized sample (real bibliographic metadata; abstracts
+removed) that illustrates this exact format — useful as a template when preparing your own
+corpus.
 
 ## Method
 
