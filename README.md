@@ -1,10 +1,11 @@
 # nf-review
 
-Two-step LLM classifier for systematic review of academic papers on natural farming in India.
+Three-step LLM classifier for systematic review of academic papers on natural farming in India.
 
-Papers from the input corpus are first screened for substantive India relevance, then for
-any sustainable or agroecological farming angle. Each decision includes a model-generated
-rationale and confidence level, so the resulting shortlist is auditable.
+Papers from the input corpus are screened in sequence: first for substantive India relevance,
+then for any sustainable or agroecological farming angle, and optionally for social dimensions
+of farming. Each decision includes a model-generated rationale and confidence level, so the
+resulting shortlist is auditable.
 
 ## Method
 
@@ -23,9 +24,14 @@ low-external-input farming.
 (Title, Year), then by DOI, keeping the richest (most complete) copy each time. Papers
 with no abstract are excluded as unclassifiable.
 
+**Step 3 — Social dimensions screen (optional).** Papers that passed step 2 are classified
+for substantive social dimensions: gender, age, caste, poverty, livelihoods, land ownership,
+mobility and migrant status, political affiliations, culture and traditions, community
+structures, or socio-economic conditions. Run separately with `--social`.
+
 **Resumability.** Each classification step caches results in a JSONL file
-(`cache_india.jsonl`, `cache_natural_farming.jsonl`). An interrupted run resumes from
-where it stopped at no extra cost.
+(`cache_india.jsonl`, `cache_natural_farming.jsonl`, `cache_social.jsonl`). An interrupted
+run resumes from where it stopped at no extra cost.
 
 ## Files
 
@@ -33,7 +39,8 @@ where it stopped at no extra cost.
 |------|-------------|
 | `classify_papers.py` | The classifier script (requires `openai`; run with `uv`). |
 | `india_papers.csv` | Papers with substantive India relevance (step 1 survivors). |
-| `natural_farming_papers.csv` | **Final shortlist**: India-relevant + natural-farming papers. |
+| `natural_farming_papers.csv` | India-relevant + natural-farming papers (step 2 survivors). |
+| `social_dimensions_papers.csv` | Natural farming papers with a social angle (step 3 survivors). |
 | `excluded_papers.csv` | Every excluded paper with the stage and reason for exclusion. |
 | `funnel_summary.txt` | PRISMA-style count from full corpus to final shortlist. |
 
@@ -61,8 +68,11 @@ Set `OPENAI_API_KEY` in your environment, then:
 # Smoke test first: 3 papers, prints results + cost estimate
 uv run classify_papers.py --smoke
 
-# Full run (after approving the cost estimate)
+# Full run (steps 1 + 2: India screen → natural farming screen)
 uv run classify_papers.py
+
+# Step 3: social dimensions screen (runs on natural_farming_papers.csv)
+uv run classify_papers.py --social
 ```
 
 `uv` provisions the interpreter and `openai` dependency from the script's PEP 723 header.

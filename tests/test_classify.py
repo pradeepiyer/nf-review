@@ -6,9 +6,10 @@ import pytest
 from classify_papers import (
     norm_title, has_abstract, text_completeness, load_and_preprocess,
     paper_block, load_cache, save_to_cache,
-    write_india_csv, write_nf_csv, write_excluded_csv,
+    write_india_csv, write_nf_csv, write_excluded_csv, write_social_csv,
     format_funnel, write_funnel,
-    NO_ABSTRACT,
+    count_csv_rows, count_cache_entries,
+    NO_ABSTRACT, SOCIAL_FIELDS,
 )
 
 FIELDS = ["Corpus ID", "Authors", "Year", "Title", "Abstract", "Keywords",
@@ -273,6 +274,40 @@ def test_write_excluded_csv(tmp_path):
     assert rows[0]["Stage"] == "duplicate (Title, Year)"
     assert rows[1]["Stage"] == "India screen"
 
+def test_write_social_csv(tmp_path):
+    papers = [{
+        "Corpus ID": "5", "Authors": "Kumar R.", "Year": "2023",
+        "Title": "Women and ZBNF in Andhra Pradesh", "DOI": "10.9999/z",
+        "India_confidence": "high", "India_reason": "Andhra Pradesh study",
+        "NF_confidence": "high", "NF_reason": "ZBNF is the central topic",
+        "Abstract": "Should not appear",
+        "Social_confidence": "high", "Social_reason": "Gender roles are the central focus",
+    }]
+    out = tmp_path / "social.csv"
+    write_social_csv(papers, path=str(out))
+    rows = list(csv.DictReader(open(str(out))))
+    assert len(rows) == 1
+    assert rows[0]["Social_confidence"] == "high"
+    assert rows[0]["Social_reason"] == "Gender roles are the central focus"
+    assert "Abstract" not in rows[0]
+    assert list(rows[0].keys()) == SOCIAL_FIELDS
+
+def test_count_csv_rows(tmp_path):
+    p = tmp_path / "data.csv"
+    p.write_text("a,b\n1,2\n3,4\n")
+    assert count_csv_rows(str(p)) == 2
+
+def test_count_csv_rows_missing_file(tmp_path):
+    assert count_csv_rows(str(tmp_path / "missing.csv")) == 0
+
+def test_count_cache_entries(tmp_path):
+    p = tmp_path / "cache.jsonl"
+    p.write_text('{"corpus_id":"1"}\n{"corpus_id":"2"}\n\n')
+    assert count_cache_entries(str(p)) == 2
+
+def test_count_cache_entries_missing_file(tmp_path):
+    assert count_cache_entries(str(tmp_path / "missing.jsonl")) == 0
+
 def test_format_funnel_contains_all_counts():
     funnel = {
         "total_read": 100, "removed_title_year": 10, "removed_doi": 5,
@@ -284,6 +319,20 @@ def test_format_funnel_contains_all_counts():
     text = "\n".join(lines)
     for expected in ["100", "10", "5", "15", "70", "20", "48", "2", "8", "11", "1"]:
         assert expected in text, f"Expected '{expected}' in funnel summary"
+    assert "Social" not in text
+
+def test_format_funnel_includes_social_when_present():
+    funnel = {
+        "total_read": 100, "removed_title_year": 0, "removed_doi": 0,
+        "removed_no_abstract": 0, "to_classify": 100,
+        "india_relevant": 40, "india_not_relevant": 60, "india_errors": 0,
+        "nf_relevant": 20, "nf_not_relevant": 20, "nf_errors": 0,
+        "social_relevant": 7, "social_not_relevant": 13, "social_errors": 0,
+    }
+    text = "\n".join(format_funnel(funnel))
+    assert "Social dimensions shortlist" in text
+    assert "7" in text
+    assert "13" in text
 
 def test_write_funnel_writes_file_and_prints(tmp_path, capsys):
     funnel = {

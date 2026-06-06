@@ -18,8 +18,10 @@ MODEL = "gpt-5-mini"
 PAPERS_FILE = "Total_Paper_List.csv"
 INDIA_CACHE = "cache_india.jsonl"
 NF_CACHE = "cache_natural_farming.jsonl"
+SOCIAL_CACHE = "cache_social.jsonl"
 INDIA_OUT = "india_papers.csv"
 NF_OUT = "natural_farming_papers.csv"
+SOCIAL_OUT = "social_dimensions_papers.csv"
 EXCLUDED_OUT = "excluded_papers.csv"
 FUNNEL_OUT = "funnel_summary.txt"
 NO_ABSTRACT = "[No abstract available]"
@@ -91,10 +93,45 @@ Respond with a JSON object:
 - reason: one sentence describing your judgment — do NOT quote the abstract
 """
 
+SOCIAL_PROMPT = """\
+You are classifying academic papers about natural farming in India for social dimensions. These papers have already been confirmed to be about India and to involve alternative or sustainable farming.
+
+Your task: Determine whether this paper substantively studies one or more SOCIAL DIMENSIONS of farming. Include:
+- Gender roles or women's participation in farming decisions or labour
+- Age or generational factors among farmers
+- Caste dynamics in agricultural access, participation, or outcomes
+- Poverty, livelihoods, or income effects on farming households
+- Socio-economic conditions or class distinctions among farmers
+- Land ownership, tenure security, or land access
+- Mobility, migrant workers, or seasonal labour in farming
+- Political affiliations, farmer movements, or policy participation
+- Culture, traditions, rituals, or indigenous knowledge tied to farming practices
+- Community or social structures (collectives, cooperatives, self-help groups)
+- Geographic or location-based social inequalities (urban–rural, region, remoteness)
+
+Papers focused PURELY on agronomic or biophysical outcomes (yields, soil chemistry, pest biology, crop genetics) with no social angle are NOT relevant.
+
+Examples:
+- "Women's role in ZBNF decision-making in Andhra Pradesh households" → relevant (gender)
+- "Caste-based access to natural farming training programmes in Maharashtra" → relevant (caste, social structures)
+- "Livelihoods of smallholder farmers transitioning away from chemical inputs" → relevant (poverty, socio-economic)
+- "Land tenure and adoption of organic farming in tribal areas of Jharkhand" → relevant (land ownership)
+- "Seasonal migrant labour and natural farming calendar conflicts in Punjab" → relevant (mobility, migrant status)
+- "Gandhian culture and traditional seed-saving practices in rural Rajasthan" → relevant (culture, traditions)
+- "Effect of vermicompost on groundnut yield and phosphorus uptake in West Bengal" → not relevant (purely agronomic)
+- "Soil carbon sequestration under zero-tillage in Punjab Vertisols" → not relevant (purely biophysical)
+
+Respond with a JSON object:
+- relevant: true if any social dimension is substantively studied, false if purely agronomic or biophysical
+- confidence: "high" if clear, "medium" if uncertain, "low" if focus is hard to determine
+- reason: one sentence describing your judgment — do NOT quote the abstract
+"""
+
 # ── OUTPUT SCHEMAS ────────────────────────────────────────────────────────────
 
 INDIA_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "India_confidence", "India_reason"]
 NF_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "India_confidence", "India_reason", "NF_confidence", "NF_reason"]
+SOCIAL_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "India_confidence", "India_reason", "NF_confidence", "NF_reason", "Social_confidence", "Social_reason"]
 EXCLUDED_FIELDS = ["Corpus ID", "Title", "Year", "Stage", "Reason"]
 
 # ── PREPROCESSING ─────────────────────────────────────────────────────────────
@@ -227,16 +264,51 @@ def write_nf_csv(papers, path=NF_OUT):
         writer.writeheader()
         writer.writerows(papers)
 
+def write_social_csv(papers, path=SOCIAL_OUT):
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=SOCIAL_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(papers)
+
 def write_excluded_csv(excluded, path=EXCLUDED_OUT):
     with open(path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=EXCLUDED_FIELDS, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(excluded)
 
+def count_csv_rows(path):
+    if not os.path.exists(path):
+        return 0
+    with open(path, encoding="utf-8", newline="") as f:
+        return max(0, sum(1 for _ in csv.reader(f)) - 1)
+
+def count_cache_entries(path):
+    if not os.path.exists(path):
+        return 0
+    with open(path, encoding="utf-8") as f:
+        return sum(1 for line in f if line.strip())
+
+def build_funnel_from_files():
+    """Reconstruct funnel counts from on-disk files; used by --social to extend the main funnel."""
+    _, funnel, _ = load_and_preprocess()
+    india_cached = count_cache_entries(INDIA_CACHE)
+    india_relevant = count_csv_rows(INDIA_OUT)
+    nf_cached = count_cache_entries(NF_CACHE)
+    nf_relevant = count_csv_rows(NF_OUT)
+    funnel.update({
+        "india_relevant": india_relevant,
+        "india_not_relevant": india_cached - india_relevant,
+        "india_errors": funnel["to_classify"] - india_cached,
+        "nf_relevant": nf_relevant,
+        "nf_not_relevant": nf_cached - nf_relevant,
+        "nf_errors": india_relevant - nf_cached,
+    })
+    return funnel
+
 def format_funnel(funnel):
     def val(key):
         return str(funnel.get(key, "N/A"))
-    return [
+    lines = [
         "PRISMA Funnel Summary",
         "=" * 42,
         f"Total papers read:                {val('total_read')}",
@@ -249,8 +321,15 @@ def format_funnel(funnel):
         f"India-relevant:                   {val('india_relevant')}",
         f"  - Natural farming: not rel:     -{val('nf_not_relevant')}",
         f"  - Natural farming: errors:      {val('nf_errors')}",
-        f"Final shortlist:                  {val('nf_relevant')}",
+        f"Natural farming shortlist:        {val('nf_relevant')}",
     ]
+    if "social_relevant" in funnel:
+        lines += [
+            f"  - Social dimensions: not rel:   -{val('social_not_relevant')}",
+            f"  - Social dimensions: errors:    {val('social_errors')}",
+            f"Social dimensions shortlist:      {val('social_relevant')}",
+        ]
+    return lines
 
 def write_funnel(funnel, path=FUNNEL_OUT):
     text = "\n".join(format_funnel(funnel))
@@ -330,8 +409,39 @@ async def run_step(client, papers, system_prompt, cache_path, step_label):
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
-async def async_main(smoke=False):
+async def async_main(smoke=False, social=False):
     client = AsyncOpenAI()
+
+    if social:
+        if not os.path.exists(NF_OUT):
+            print(f"ERROR: {NF_OUT} not found. Run the full pipeline first.")
+            return
+        with open(NF_OUT, encoding="utf-8", newline="") as f:
+            nf_papers = list(csv.DictReader(f))
+        print(f"Social screen: classifying {len(nf_papers)} natural farming papers...")
+        social_papers, social_excluded, social_errors, _ = await run_step(
+            client, nf_papers, SOCIAL_PROMPT, SOCIAL_CACHE, "Social"
+        )
+        funnel = build_funnel_from_files()
+        funnel.update({
+            "social_relevant": len(social_papers),
+            "social_not_relevant": len(social_excluded),
+            "social_errors": social_errors,
+        })
+        existing_excluded = []
+        if os.path.exists(EXCLUDED_OUT):
+            with open(EXCLUDED_OUT, encoding="utf-8", newline="") as f:
+                existing_excluded = list(csv.DictReader(f))
+        write_social_csv(social_papers)
+        write_excluded_csv(existing_excluded + social_excluded)
+        write_funnel(funnel)
+        print(f"\nWrote {SOCIAL_OUT} ({len(social_papers)} papers)")
+        print(f"Wrote {EXCLUDED_OUT} ({len(existing_excluded) + len(social_excluded)} papers total)")
+        print(f"Wrote {FUNNEL_OUT}")
+        if social_errors:
+            print(f"\nWARNING: {social_errors} paper(s) errored — rerun --social to retry.")
+        return
+
     papers, funnel, preprocessing_excluded = load_and_preprocess()
 
     print(f"Preprocessing: {funnel['total_read']} read → {funnel['to_classify']} to classify "
@@ -397,8 +507,9 @@ async def async_main(smoke=False):
 def main():
     parser = argparse.ArgumentParser(description="Two-step LLM classifier for academic papers.")
     parser.add_argument("--smoke", action="store_true", help="Run on first 3 papers only to verify API and estimate cost.")
+    parser.add_argument("--social", action="store_true", help="Run Step 3 (social dimensions screen) on natural_farming_papers.csv.")
     args = parser.parse_args()
-    asyncio.run(async_main(smoke=args.smoke))
+    asyncio.run(async_main(smoke=args.smoke, social=args.social))
 
 if __name__ == "__main__":
     main()
