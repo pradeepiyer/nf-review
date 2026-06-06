@@ -25,7 +25,9 @@ From a corpus of ~7,364 papers, produce a final shortlist of papers that are **b
    agroecological farming approach.
 
 Each included or excluded paper carries a short machine-generated rationale and a
-confidence level, so decisions are auditable.
+confidence level, so decisions are auditable. The pipeline also produces a PRISMA-style
+funnel accounting — the count of papers from full corpus to final shortlist, with the
+number rejected and the reason at every stage.
 
 ## Non-goals (YAGNI)
 
@@ -57,15 +59,21 @@ farming. Purely conventional/industrial agriculture with no alternative-farming 
 ```
 Total_Paper_List.csv  (7,364 rows, gitignored, user-supplied)
         │
-        ▼  dedup (Title,Year) then DOI
-   deduped corpus
+        ▼  dedup (Title,Year) keep richest      − 437
+        ▼  dedup (DOI) keep richest             −  39
+        ▼  remove papers with no abstract       −1419
+   5,469 papers to classify
         │
-        ▼  STEP 1 — India? (gpt-5-mini, over full deduped corpus)
+        ▼  STEP 1 — India? (gpt-5-mini, over the 5,469)
    india_papers.csv          (survivors + India_confidence + India_reason)
         │
         ▼  STEP 2 — Natural farming? (gpt-5-mini, over step-1 survivors only)
    natural_farming_papers.csv   ← FINAL deliverable
 ```
+
+(Stage counts above are from the current `Total_Paper_List.csv`; they will vary with a
+different corpus. The LLM-step exclusion counts are not yet known — they come from the
+run.)
 
 Step 2 runs only over step-1 survivors, so its prompt assumes India relevance and judges
 only the farming dimension.
@@ -78,27 +86,37 @@ only the farming dimension.
 - `OPENAI_API_KEY` — read from the environment.
 - Run via `uv run classify_papers.py` (PEP 723 header declares `openai` dependency).
 
-## Deduplication
+## Preprocessing: dedup + abstract filter
 
 Method-agnostic preprocessing, re-implemented cleanly (not carried over from the old
-script):
+script). Three stages, in this order:
 
-1. Drop exact duplicates by normalized `(Title, Year)` — lowercased, whitespace-collapsed
-   title.
-2. Collapse remaining rows by lowercased `DOI`, keeping the row with the most complete
-   searchable text (`len(abstract) + len(keywords)`, with `[No abstract available]`
-   counted as empty). Rows with no DOI are all kept.
+1. **Dedup by `(Title, Year)`** — normalized (lowercased, whitespace-collapsed) title.
+   Among rows sharing a key, keep the one with the most complete searchable text
+   (`len(abstract) + len(keywords)`, `[No abstract available]` counted as empty).
+2. **Dedup by `DOI`** — lowercased DOI; again keep the most complete row. Rows with no
+   DOI are all kept.
+3. **Remove papers with no abstract** — drop any remaining row whose abstract is empty or
+   `[No abstract available]`. These cannot be judged on more than a title, so they are
+   excluded rather than classified on a title alone.
 
-Dedup happens once, before any API calls, so duplicates are never classified or listed
-twice.
+**Why dedup before the abstract filter.** Both dedup stages keep the *richest* copy, so a
+paper that exists both with and without an abstract keeps its abstract-bearing copy. Doing
+dedup first means the "no abstract" exclusion counts only papers for which *no* copy has
+an abstract anywhere — an honest figure — while a duplicate that merely happened to lack
+an abstract is correctly attributed to "duplicate." Verified: the final set is identical
+either order (5,469 papers); only the attribution of a removed copy differs.
+
+All preprocessing happens once, before any API calls, so removed papers are never
+classified or listed.
 
 ## Paper text assembly
 
-For each paper the model receives a labeled block built from `Title`, `Year`, `Abstract`
-(empty if `[No abstract available]`), and `Keywords`. Corpus reality: 5,996 papers have no
-keywords and 1,437 have no abstract, so many papers are judged on **title alone**. The
-prompt instructs the model to judge from whatever text is present; the `confidence` field
-flags thin/title-only cases.
+For each paper the model receives a labeled block built from `Title`, `Year`, `Abstract`,
+and `Keywords`. Because papers with no abstract are removed in preprocessing (see below),
+the model always has **at least a title and an abstract** to judge. Keywords are often
+absent (5,996 of the full corpus lack them) and are simply omitted from the block when
+empty. The `confidence` field still flags cases the model finds thin or ambiguous.
 
 ## Classification core
 
@@ -147,9 +165,9 @@ does not re-check India.
 
 One JSONL cache per step: `cache_india.jsonl`, `cache_natural_farming.jsonl`. Each line:
 `{"corpus_id": ..., "relevant": ..., "confidence": ..., "reason": ...}`. Before each call
-the cache is consulted and hits are skipped. A 7k-call run can be interrupted (crash, rate
-limit, Ctrl-C) and resumed at no extra cost — only unclassified or previously-errored
-papers re-fire. `error` outcomes are **not** cached, so they retry next run.
+the cache is consulted and hits are skipped. A multi-thousand-call run (~5,469 for step 1)
+can be interrupted (crash, rate limit, Ctrl-C) and resumed at no extra cost — only
+unclassified or previously-errored papers re-fire. `error` outcomes are **not** cached, so they retry next run.
 
 Caches are **gitignored** as transient build artifacts (they are large and a `reason` may
 paraphrase abstract content).
@@ -162,17 +180,41 @@ hit rate limits during the smoke test.
 
 ## Outputs
 
-| File | Columns |
+| File | Columns / contents |
 |------|---------|
 | `india_papers.csv` | `Corpus ID, Authors, Year, Title, DOI, India_confidence, India_reason` |
 | `natural_farming_papers.csv` (**final**) | `Corpus ID, Authors, Year, Title, DOI, India_confidence, India_reason, NF_confidence, NF_reason` |
+| `excluded_papers.csv` | `Corpus ID, Title, Year, Stage, Reason` — every rejected paper, all stages |
+| `funnel_summary.txt` | PRISMA-style counts: full → final, removed-with-reason per stage |
 
-Each CSV holds only the `relevant = true` survivors of its step: `india_papers.csv` is the
-India-relevant set, and `natural_farming_papers.csv` is the both-criteria shortlist (its
-rows are India-relevant by construction *and* natural-farming-relevant). The complete
-decision record for every paper, including the excluded ones and their reasons, lives in
-the JSONL caches. Both CSVs contain only bibliographic metadata (no abstracts) and are
-safe to commit.
+The two shortlist CSVs hold only the `relevant = true` survivors of their step:
+`india_papers.csv` is the India-relevant set, and `natural_farming_papers.csv` is the
+both-criteria shortlist (its rows are India-relevant by construction *and*
+natural-farming-relevant). All CSVs contain only bibliographic metadata (no abstracts) and
+are safe to commit. The complete per-paper decision record (including model reasons) also
+lives in the JSONL caches.
+
+## Funnel accounting (PRISMA-style)
+
+The pipeline tracks every paper from the full corpus to the final shortlist, recording how
+many were rejected and why at each stage:
+
+1. **Total read** from `Total_Paper_List.csv`
+2. **− duplicate (Title, Year)**
+3. **− duplicate (DOI)**
+4. **− no abstract**
+5. **= papers classified (India step)**
+6. **− India screen: not relevant** (and **error** count, if any)
+7. **= India-relevant (→ `india_papers.csv`)**
+8. **− natural-farming screen: not relevant** (and **error** count, if any)
+9. **= final shortlist (→ `natural_farming_papers.csv`)**
+
+These counts are printed to stdout at the end of the run **and** persisted to
+`funnel_summary.txt`. Per-paper attribution for every rejected paper — Corpus ID, the
+stage that rejected it, and the reason (categorical for preprocessing; the model's reason
+for the screens) — is written to `excluded_papers.csv`, giving a complete audit trail in
+one place. `error` outcomes are reported in the funnel but are not exclusions (they retry
+on the next run).
 
 ## Smoke test & cost gating
 
@@ -182,7 +224,7 @@ Before the full sweep:
    whether it takes `max_completion_tokens` vs `max_tokens`, whether `temperature` is
    fixed, whether `reasoning_effort` applies, and that structured outputs work.
 2. Report **real token usage** from those calls and extrapolate the full-corpus cost.
-   Pradeep approves the full run with actual numbers before ~7k calls fire.
+   Pradeep approves the full run with actual numbers before the ~5,469 step-1 calls fire.
 
 ## Config constants (top of script)
 
@@ -211,9 +253,9 @@ format, how to run, outputs, and the `OPENAI_API_KEY` requirement.
 
 ## Testing
 
-- Unit tests on **pure logic only** with small real fixtures: dedup, paper-text assembly,
-  cache read/write round-trip, CSV writing. No mocked-OpenAI tests (they would only test
-  the mock).
+- Unit tests on **pure logic only** with small real fixtures: dedup, no-abstract filter,
+  funnel counting, paper-text assembly, cache read/write round-trip, CSV writing. No
+  mocked-OpenAI tests (they would only test the mock).
 - The live API path is verified by the 3-paper smoke test, not a mock.
 - A full end-to-end over 7k papers is gated on the cost approval above.
 
@@ -222,5 +264,9 @@ format, how to run, outputs, and the `OPENAI_API_KEY` requirement.
 - **gpt-5-mini API surface** is past the assistant's Aug 2025 knowledge cutoff. The exact
   param names and structured-output mechanism are verified empirically in the smoke test
   before committing to the full run, rather than assumed.
-- **Title-only papers** (no abstract/keywords) give the model little to judge; `confidence`
-  surfaces these so Pradeep can review low-confidence inclusions/exclusions if desired.
+- **Papers with no abstract are excluded** in preprocessing (1,419 in the current corpus).
+  This trades recall for judgment quality — a title alone is too thin to classify
+  reliably. They are recorded in `excluded_papers.csv` so the loss is visible and
+  reviewable, not silent.
+- **Abstract-only papers** (abstract present but no keywords, ~5,996 in the full corpus)
+  are still classified on title + abstract; `confidence` flags any the model finds thin.
