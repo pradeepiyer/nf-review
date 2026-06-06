@@ -216,19 +216,47 @@ def save_to_cache(path, corpus_id, result):
 # ── CSV WRITERS + FUNNEL ──────────────────────────────────────────────────────
 
 def write_india_csv(papers, path=INDIA_OUT):
-    pass
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=INDIA_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(papers)
 
 def write_nf_csv(papers, path=NF_OUT):
-    pass
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=NF_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(papers)
 
 def write_excluded_csv(excluded, path=EXCLUDED_OUT):
-    pass
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=EXCLUDED_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(excluded)
 
 def format_funnel(funnel):
-    pass
+    def val(key):
+        return str(funnel.get(key, "N/A"))
+    return [
+        "PRISMA Funnel Summary",
+        "=" * 42,
+        f"Total papers read:                {val('total_read')}",
+        f"  - Duplicate (Title, Year):      -{val('removed_title_year')}",
+        f"  - Duplicate (DOI):              -{val('removed_doi')}",
+        f"  - No abstract:                  -{val('removed_no_abstract')}",
+        f"Papers to classify (India):       {val('to_classify')}",
+        f"  - India: not relevant:          -{val('india_not_relevant')}",
+        f"  - India: errors (retry):        {val('india_errors')}",
+        f"India-relevant:                   {val('india_relevant')}",
+        f"  - Natural farming: not rel:     -{val('nf_not_relevant')}",
+        f"  - Natural farming: errors:      {val('nf_errors')}",
+        f"Final shortlist:                  {val('nf_relevant')}",
+    ]
 
 def write_funnel(funnel, path=FUNNEL_OUT):
-    pass
+    text = "\n".join(format_funnel(funnel))
+    print(text)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text + "\n")
 
 # ── ASYNC CLASSIFIER ──────────────────────────────────────────────────────────
 
