@@ -111,7 +111,71 @@ def text_completeness(row):
     return len(abstract) + len(row.get("Keywords") or "")
 
 def load_and_preprocess(path=PAPERS_FILE):
-    pass
+    csv.field_size_limit(10 ** 8)
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    total = len(rows)
+
+    # Stage 1: dedup by (Title, Year) — keep richest copy
+    best_ty = {}
+    for row in rows:
+        key = (norm_title(row["Title"]), (row.get("Year") or "").strip())
+        if key not in best_ty or text_completeness(row) > text_completeness(best_ty[key]):
+            best_ty[key] = row
+    after_ty = list(best_ty.values())
+    removed_ty = total - len(after_ty)
+
+    # Stage 2: dedup by DOI — keep richest copy; no-DOI rows always kept
+    by_doi = {}
+    no_doi = []
+    for row in after_ty:
+        doi = (row.get("DOI") or "").strip().lower()
+        if not doi:
+            no_doi.append(row)
+        elif doi not in by_doi or text_completeness(row) > text_completeness(by_doi[doi]):
+            by_doi[doi] = row
+    after_doi = list(by_doi.values()) + no_doi
+    removed_doi = len(after_ty) - len(after_doi)
+
+    # Stage 3: remove papers with no abstract
+    with_abs = [r for r in after_doi if has_abstract(r)]
+    removed_noabs = len(after_doi) - len(with_abs)
+
+    # Build excluded rows — attribute each dropped paper to its earliest stage
+    ty_ids = {r["Corpus ID"] for r in after_ty}
+    doi_ids = {r["Corpus ID"] for r in after_doi}
+    abs_ids = {r["Corpus ID"] for r in with_abs}
+
+    excluded = []
+    seen = set()
+    for row in rows:
+        cid = row["Corpus ID"]
+        if cid in seen:
+            continue
+        if cid not in ty_ids:
+            seen.add(cid)
+            excluded.append({"Corpus ID": cid, "Title": row["Title"],
+                             "Year": row.get("Year", ""), "Stage": "duplicate (Title, Year)",
+                             "Reason": "Duplicate title and year; richer copy retained"})
+        elif cid not in doi_ids:
+            seen.add(cid)
+            excluded.append({"Corpus ID": cid, "Title": row["Title"],
+                             "Year": row.get("Year", ""), "Stage": "duplicate (DOI)",
+                             "Reason": "Duplicate DOI; richer copy retained"})
+        elif cid not in abs_ids:
+            seen.add(cid)
+            excluded.append({"Corpus ID": cid, "Title": row["Title"],
+                             "Year": row.get("Year", ""), "Stage": "no abstract",
+                             "Reason": "No abstract available"})
+
+    funnel = {
+        "total_read": total,
+        "removed_title_year": removed_ty,
+        "removed_doi": removed_doi,
+        "removed_no_abstract": removed_noabs,
+        "to_classify": len(with_abs),
+    }
+    return with_abs, funnel, excluded
 
 # ── TEXT ASSEMBLY ─────────────────────────────────────────────────────────────
 
