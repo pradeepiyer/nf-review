@@ -1,0 +1,13 @@
+PRISMA Funnel Summary
+==========================================
+Total papers read:                7364
+  - Duplicate (Title, Year):      -437
+  - Duplicate (DOI):              -39
+  - No abstract:                  -1419
+Papers to classify (India):       5469
+  - India: not relevant:          -4586
+  - India: errors (retry):        0
+India-relevant:                   883
+  - Natural farming: not rel:     -102
+  - Natural farming: errors:      0
+Final shortlist:                  781
