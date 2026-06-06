@@ -10,4 +10,7 @@ Papers to classify (India):       5469
 India-relevant:                   883
   - Natural farming: not rel:     -102
   - Natural farming: errors:      0
-Final shortlist:                  781
+Natural farming shortlist:        781
+  - Social dimensions: not rel:   -474
+  - Social dimensions: errors:    0
+Social dimensions shortlist:      307

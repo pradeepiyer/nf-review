@@ -288,6 +288,13 @@ def count_cache_entries(path):
     with open(path, encoding="utf-8") as f:
         return sum(1 for line in f if line.strip())
 
+def load_paper_text(path=PAPERS_FILE):
+    """Load abstract and keywords keyed by Corpus ID, for enriching output CSVs before classification."""
+    csv.field_size_limit(10 ** 8)
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return {row["Corpus ID"]: {"Abstract": row.get("Abstract", ""), "Keywords": row.get("Keywords", "")}
+                for row in csv.DictReader(f)}
+
 def build_funnel_from_files():
     """Reconstruct funnel counts from on-disk files; used by --social to extend the main funnel."""
     _, funnel, _ = load_and_preprocess()
@@ -418,6 +425,11 @@ async def async_main(smoke=False, social=False):
             return
         with open(NF_OUT, encoding="utf-8", newline="") as f:
             nf_papers = list(csv.DictReader(f))
+        paper_text = load_paper_text()
+        for paper in nf_papers:
+            text = paper_text.get(paper["Corpus ID"], {})
+            paper["Abstract"] = text.get("Abstract", "")
+            paper["Keywords"] = text.get("Keywords", "")
         print(f"Social screen: classifying {len(nf_papers)} natural farming papers...")
         social_papers, social_excluded, social_errors, _ = await run_step(
             client, nf_papers, SOCIAL_PROMPT, SOCIAL_CACHE, "Social"
