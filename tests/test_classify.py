@@ -160,3 +160,31 @@ def test_funnel_totals_consistent(tmp_path):
     assert stages["1"] == "duplicate (Title, Year)"
     assert stages["3"] == "duplicate (DOI)"
     assert stages["5"] == "no abstract"
+
+# ── paper_block ───────────────────────────────────────────────────────────────
+
+def test_paper_block_full():
+    row = {"Title": "Organic farming in Punjab", "Year": "2021",
+           "Abstract": "This study examines outcomes.", "Keywords": "organic; Punjab; India"}
+    block = paper_block(row)
+    assert "Title: Organic farming in Punjab" in block
+    assert "Year: 2021" in block
+    assert "Abstract: This study examines outcomes." in block
+    assert "Keywords: organic; Punjab; India" in block
+
+def test_paper_block_no_keywords_empty_string():
+    row = {"Title": "ZBNF study", "Year": "2022",
+           "Abstract": "Zero budget farming explored.", "Keywords": ""}
+    block = paper_block(row)
+    assert "Keywords" not in block
+
+def test_paper_block_none_keywords():
+    row = {"Title": "ZBNF study", "Year": "2022",
+           "Abstract": "Zero budget farming explored.", "Keywords": None}
+    block = paper_block(row)
+    assert "Keywords" not in block
+
+def test_paper_block_whitespace_keywords_omitted():
+    row = {"Title": "Study", "Year": "2023", "Abstract": "Abstract text.", "Keywords": "   "}
+    block = paper_block(row)
+    assert "Keywords" not in block
