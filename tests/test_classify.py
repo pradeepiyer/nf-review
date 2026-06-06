@@ -222,3 +222,80 @@ def test_cache_last_write_wins_on_duplicate_id(tmp_path):
     save_to_cache(path, "1", {"relevant": False, "confidence": "low", "reason": "Second"})
     cache = load_cache(path)
     assert cache["1"]["reason"] == "Second"
+
+# ── CSV writers ───────────────────────────────────────────────────────────────
+
+def test_write_india_csv(tmp_path):
+    papers = [{
+        "Corpus ID": "1", "Authors": "Smith J.", "Year": "2021",
+        "Title": "Organic farming in Punjab", "DOI": "10.1234/x",
+        "Abstract": "Should not appear",
+        "India_confidence": "high", "India_reason": "Punjab is the study site",
+    }]
+    out = tmp_path / "india.csv"
+    write_india_csv(papers, path=str(out))
+    rows = list(csv.DictReader(open(str(out))))
+    assert len(rows) == 1
+    assert rows[0]["India_confidence"] == "high"
+    assert rows[0]["India_reason"] == "Punjab is the study site"
+    assert "Abstract" not in rows[0]
+    assert list(rows[0].keys()) == ["Corpus ID", "Authors", "Year", "Title", "DOI",
+                                     "India_confidence", "India_reason"]
+
+def test_write_nf_csv(tmp_path):
+    papers = [{
+        "Corpus ID": "2", "Authors": "Jones A.", "Year": "2022",
+        "Title": "ZBNF in Andhra Pradesh", "DOI": "10.5678/y",
+        "India_confidence": "high", "India_reason": "Andhra Pradesh study",
+        "NF_confidence": "high", "NF_reason": "ZBNF is the central topic",
+    }]
+    out = tmp_path / "nf.csv"
+    write_nf_csv(papers, path=str(out))
+    rows = list(csv.DictReader(open(str(out))))
+    assert len(rows) == 1
+    assert rows[0]["NF_confidence"] == "high"
+    assert rows[0]["NF_reason"] == "ZBNF is the central topic"
+    assert list(rows[0].keys()) == ["Corpus ID", "Authors", "Year", "Title", "DOI",
+                                     "India_confidence", "India_reason",
+                                     "NF_confidence", "NF_reason"]
+
+def test_write_excluded_csv(tmp_path):
+    excluded = [
+        {"Corpus ID": "3", "Title": "Global agriculture", "Year": "2020",
+         "Stage": "duplicate (Title, Year)", "Reason": "Duplicate; richer copy retained"},
+        {"Corpus ID": "4", "Title": "Wheat yields in USA", "Year": "2021",
+         "Stage": "India screen", "Reason": "Study is set in the United States"},
+    ]
+    out = tmp_path / "excluded.csv"
+    write_excluded_csv(excluded, path=str(out))
+    rows = list(csv.DictReader(open(str(out))))
+    assert len(rows) == 2
+    assert rows[0]["Stage"] == "duplicate (Title, Year)"
+    assert rows[1]["Stage"] == "India screen"
+
+def test_format_funnel_contains_all_counts():
+    funnel = {
+        "total_read": 100, "removed_title_year": 10, "removed_doi": 5,
+        "removed_no_abstract": 15, "to_classify": 70,
+        "india_relevant": 20, "india_not_relevant": 48, "india_errors": 2,
+        "nf_relevant": 8, "nf_not_relevant": 11, "nf_errors": 1,
+    }
+    lines = format_funnel(funnel)
+    text = "\n".join(lines)
+    for expected in ["100", "10", "5", "15", "70", "20", "48", "2", "8", "11", "1"]:
+        assert expected in text, f"Expected '{expected}' in funnel summary"
+
+def test_write_funnel_writes_file_and_prints(tmp_path, capsys):
+    funnel = {
+        "total_read": 10, "removed_title_year": 1, "removed_doi": 0,
+        "removed_no_abstract": 2, "to_classify": 7,
+        "india_relevant": 3, "india_not_relevant": 4, "india_errors": 0,
+        "nf_relevant": 2, "nf_not_relevant": 1, "nf_errors": 0,
+    }
+    out = tmp_path / "funnel.txt"
+    write_funnel(funnel, path=str(out))
+    assert out.exists()
+    content = out.read_text()
+    assert "10" in content
+    captured = capsys.readouterr()
+    assert "10" in captured.out
