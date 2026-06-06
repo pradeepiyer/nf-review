@@ -261,15 +261,138 @@ def write_funnel(funnel, path=FUNNEL_OUT):
 # ── ASYNC CLASSIFIER ──────────────────────────────────────────────────────────
 
 async def classify(client, block, system_prompt, semaphore):
-    pass
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with semaphore:
+                response = await client.chat.completions.create(
+                    model=MODEL,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": block},
+                    ],
+                    response_format=RESPONSE_FORMAT,
+                )
+            result = json.loads(response.choices[0].message.content)
+            return result, response.usage
+        except openai.RateLimitError:
+            await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+        except openai.APIStatusError as e:
+            if e.status_code < 500:
+                return None, None  # client error, don't retry
+            await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+        except (openai.APIConnectionError, openai.APITimeoutError):
+            await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+        except Exception:
+            return None, None
+    return None, None
 
 async def run_step(client, papers, system_prompt, cache_path, step_label):
-    pass
+    cache = load_cache(cache_path)
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+    relevant = []
+    excluded = []
+    errors = 0
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+
+    async def process(paper):
+        nonlocal errors
+        cid = paper["Corpus ID"]
+        if cid in cache:
+            result = cache[cid]
+        else:
+            block = paper_block(paper)
+            result, usage = await classify(client, block, system_prompt, semaphore)
+            if result is None:
+                errors += 1
+                return
+            if usage:
+                total_usage["prompt_tokens"] += usage.prompt_tokens
+                total_usage["completion_tokens"] += usage.completion_tokens
+            save_to_cache(cache_path, cid, result)
+
+        if result["relevant"]:
+            relevant.append({
+                **paper,
+                f"{step_label}_confidence": result["confidence"],
+                f"{step_label}_reason": result["reason"],
+            })
+        else:
+            excluded.append({
+                "Corpus ID": cid,
+                "Title": paper["Title"],
+                "Year": paper.get("Year", ""),
+                "Stage": f"{step_label} screen",
+                "Reason": result["reason"],
+            })
+
+    await asyncio.gather(*[process(p) for p in papers])
+    return relevant, excluded, errors, total_usage
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
 async def async_main(smoke=False):
-    pass
+    client = AsyncOpenAI()
+    papers, funnel, preprocessing_excluded = load_and_preprocess()
+
+    print(f"Preprocessing: {funnel['total_read']} read → {funnel['to_classify']} to classify "
+          f"(−{funnel['removed_title_year']} title-dup, −{funnel['removed_doi']} doi-dup, "
+          f"−{funnel['removed_no_abstract']} no-abstract)")
+
+    classify_papers_list = papers[:3] if smoke else papers
+    if smoke:
+        print(f"\nSmoke test: classifying first {len(classify_papers_list)} papers...\n")
+
+    india_papers, india_excluded, india_errors, india_usage = await run_step(
+        client, classify_papers_list, INDIA_PROMPT, INDIA_CACHE, "India"
+    )
+    funnel.update({
+        "india_relevant": len(india_papers),
+        "india_not_relevant": len(india_excluded),
+        "india_errors": india_errors,
+    })
+
+    if smoke:
+        print("=== India screen results ===")
+        for p in india_papers:
+            print(f"  RELEVANT [{p['India_confidence']}]: {p['Title'][:70]}")
+            print(f"    → {p['India_reason']}")
+        for e in india_excluded:
+            print(f"  NOT RELEVANT: {e['Title'][:70]}")
+            print(f"    → {e['Reason']}")
+        n = len(classify_papers_list)
+        prompt_tok = india_usage["prompt_tokens"]
+        completion_tok = india_usage["completion_tokens"]
+        total_tok = prompt_tok + completion_tok
+        avg = total_tok / max(n, 1)
+        projected = int(avg * funnel["to_classify"])
+        print(f"\nTokens used ({n} papers): {total_tok} "
+              f"(prompt={prompt_tok}, completion={completion_tok})")
+        print(f"Average per paper: {avg:.0f} tokens")
+        print(f"Projected for full {funnel['to_classify']}-paper India step: ~{projected:,} tokens")
+        print("\nIf results look correct, run without --smoke to start the full sweep.")
+        return
+
+    nf_papers, nf_excluded, nf_errors, _ = await run_step(
+        client, india_papers, NF_PROMPT, NF_CACHE, "NF"
+    )
+    funnel.update({
+        "nf_relevant": len(nf_papers),
+        "nf_not_relevant": len(nf_excluded),
+        "nf_errors": nf_errors,
+    })
+
+    all_excluded = preprocessing_excluded + india_excluded + nf_excluded
+    write_india_csv(india_papers)
+    write_nf_csv(nf_papers)
+    write_excluded_csv(all_excluded)
+    write_funnel(funnel)
+
+    print(f"\nWrote {INDIA_OUT} ({len(india_papers)} papers)")
+    print(f"Wrote {NF_OUT} ({len(nf_papers)} papers)")
+    print(f"Wrote {EXCLUDED_OUT} ({len(all_excluded)} papers)")
+    print(f"Wrote {FUNNEL_OUT}")
+    if india_errors or nf_errors:
+        print(f"\nWARNING: {india_errors + nf_errors} paper(s) errored — rerun to retry them.")
 
 def main():
     parser = argparse.ArgumentParser(description="Two-step LLM classifier for academic papers.")
