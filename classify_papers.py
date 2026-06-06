@@ -193,10 +193,25 @@ def paper_block(row):
 # ── CACHE ─────────────────────────────────────────────────────────────────────
 
 def load_cache(path):
-    pass
+    if not os.path.exists(path):
+        return {}
+    cache = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                entry = json.loads(line)
+                cache[entry["corpus_id"]] = {
+                    "relevant": entry["relevant"],
+                    "confidence": entry["confidence"],
+                    "reason": entry["reason"],
+                }
+    return cache
 
 def save_to_cache(path, corpus_id, result):
-    pass
+    entry = {"corpus_id": corpus_id, **result}
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
 
 # ── CSV WRITERS + FUNNEL ──────────────────────────────────────────────────────
 
