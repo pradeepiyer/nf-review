@@ -188,3 +188,37 @@ def test_paper_block_whitespace_keywords_omitted():
     row = {"Title": "Study", "Year": "2023", "Abstract": "Abstract text.", "Keywords": "   "}
     block = paper_block(row)
     assert "Keywords" not in block
+
+# ── cache ─────────────────────────────────────────────────────────────────────
+
+def test_load_cache_missing_file(tmp_path):
+    cache = load_cache(str(tmp_path / "nonexistent.jsonl"))
+    assert cache == {}
+
+def test_cache_roundtrip(tmp_path):
+    path = str(tmp_path / "cache.jsonl")
+    r1 = {"relevant": True, "confidence": "high", "reason": "India is the study site"}
+    r2 = {"relevant": False, "confidence": "medium", "reason": "Global study, India not central"}
+    save_to_cache(path, "123", r1)
+    save_to_cache(path, "456", r2)
+    cache = load_cache(path)
+    assert "123" in cache
+    assert cache["123"]["relevant"] is True
+    assert cache["123"]["confidence"] == "high"
+    assert cache["123"]["reason"] == "India is the study site"
+    assert "456" in cache
+    assert cache["456"]["relevant"] is False
+
+def test_cache_appends(tmp_path):
+    path = str(tmp_path / "cache.jsonl")
+    save_to_cache(path, "1", {"relevant": True, "confidence": "high", "reason": "A"})
+    save_to_cache(path, "2", {"relevant": False, "confidence": "low", "reason": "B"})
+    cache = load_cache(path)
+    assert len(cache) == 2
+
+def test_cache_last_write_wins_on_duplicate_id(tmp_path):
+    path = str(tmp_path / "cache.jsonl")
+    save_to_cache(path, "1", {"relevant": True, "confidence": "high", "reason": "First"})
+    save_to_cache(path, "1", {"relevant": False, "confidence": "low", "reason": "Second"})
+    cache = load_cache(path)
+    assert cache["1"]["reason"] == "Second"
