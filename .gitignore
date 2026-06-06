@@ -5,3 +5,6 @@ Total_Paper_List.csv
 __pycache__/
 *.pyc
 .venv/
+
+# LLM classifier transient caches
+cache_*.jsonl
