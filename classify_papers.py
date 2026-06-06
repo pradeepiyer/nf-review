@@ -180,7 +180,15 @@ def load_and_preprocess(path=PAPERS_FILE):
 # ── TEXT ASSEMBLY ─────────────────────────────────────────────────────────────
 
 def paper_block(row):
-    pass
+    parts = [
+        f"Title: {row['Title']}",
+        f"Year: {row.get('Year', '')}",
+        f"Abstract: {row['Abstract']}",
+    ]
+    kw = (row.get("Keywords") or "").strip()
+    if kw:
+        parts.append(f"Keywords: {kw}")
+    return "\n".join(parts)
 
 # ── CACHE ─────────────────────────────────────────────────────────────────────
 
