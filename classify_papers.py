@@ -100,13 +100,15 @@ EXCLUDED_FIELDS = ["Corpus ID", "Title", "Year", "Stage", "Reason"]
 # ── PREPROCESSING ─────────────────────────────────────────────────────────────
 
 def norm_title(title):
-    pass
+    return " ".join((title or "").strip().lower().split())
 
 def has_abstract(row):
-    pass
+    a = (row.get("Abstract") or "").strip()
+    return a != "" and a != NO_ABSTRACT
 
 def text_completeness(row):
-    pass
+    abstract = "" if (row.get("Abstract") or "").strip() == NO_ABSTRACT else (row.get("Abstract") or "")
+    return len(abstract) + len(row.get("Keywords") or "")
 
 def load_and_preprocess(path=PAPERS_FILE):
     pass
