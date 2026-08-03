@@ -8,7 +8,7 @@ from classify_papers import (
     paper_block, load_cache, save_to_cache,
     write_india_csv, write_nf_csv, write_excluded_csv, write_social_csv,
     format_funnel, write_funnel,
-    count_csv_rows, count_cache_entries,
+    count_csv_rows, count_cache_entries, db_counts, csv_db_counts,
     NO_ABSTRACT, SOCIAL_FIELDS,
 )
 
@@ -162,6 +162,26 @@ def test_funnel_totals_consistent(tmp_path):
     assert stages["3"] == "duplicate (DOI)"
     assert stages["5"] == "no abstract"
 
+def test_load_and_preprocess_counts_by_database(tmp_path):
+    rows = [
+        # 1 + 2: same (title, year) → 2 is richer, so the AGRIS copy is kept
+        make_row(**{"Corpus ID": "1", "Title": "Paper A", "Year": "2020",
+                    "Abstract": "Short", "DOI": "10.1/a", "Database": "Scopus"}),
+        make_row(**{"Corpus ID": "2", "Title": "Paper A", "Year": "2020",
+                    "Abstract": "Much longer abstract text", "DOI": "10.1/b", "Database": "AGRIS"}),
+        # 3: no abstract → dropped before classification
+        make_row(**{"Corpus ID": "3", "Title": "Paper B", "Year": "2021",
+                    "Abstract": "", "DOI": "10.1/c", "Database": "AGRIS"}),
+        # 4: survives everything
+        make_row(**{"Corpus ID": "4", "Title": "Paper C", "Year": "2022",
+                    "Abstract": "Fine abstract", "DOI": "10.1/d", "Database": "CABI"}),
+    ]
+    p = tmp_path / "papers.csv"
+    write_fixture_csv(str(p), rows)
+    papers, funnel, excluded = load_and_preprocess(str(p))
+    assert funnel["db_total_read"] == {"Scopus": 1, "AGRIS": 2, "CABI": 1}
+    assert funnel["db_to_classify"] == {"AGRIS": 1, "CABI": 1}
+
 # ── paper_block ───────────────────────────────────────────────────────────────
 
 def test_paper_block_full():
@@ -230,6 +250,7 @@ def test_write_india_csv(tmp_path):
     papers = [{
         "Corpus ID": "1", "Authors": "Smith J.", "Year": "2021",
         "Title": "Organic farming in Punjab", "DOI": "10.1234/x",
+        "Database": "Scopus",
         "Abstract": "Should not appear",
         "India_confidence": "high", "India_reason": "Punjab is the study site",
     }]
@@ -239,14 +260,16 @@ def test_write_india_csv(tmp_path):
     assert len(rows) == 1
     assert rows[0]["India_confidence"] == "high"
     assert rows[0]["India_reason"] == "Punjab is the study site"
+    assert rows[0]["Database"] == "Scopus"
     assert "Abstract" not in rows[0]
     assert list(rows[0].keys()) == ["Corpus ID", "Authors", "Year", "Title", "DOI",
-                                     "India_confidence", "India_reason"]
+                                     "Database", "India_confidence", "India_reason"]
 
 def test_write_nf_csv(tmp_path):
     papers = [{
         "Corpus ID": "2", "Authors": "Jones A.", "Year": "2022",
         "Title": "ZBNF in Andhra Pradesh", "DOI": "10.5678/y",
+        "Database": "AGRIS",
         "India_confidence": "high", "India_reason": "Andhra Pradesh study",
         "NF_confidence": "high", "NF_reason": "ZBNF is the central topic",
     }]
@@ -256,8 +279,9 @@ def test_write_nf_csv(tmp_path):
     assert len(rows) == 1
     assert rows[0]["NF_confidence"] == "high"
     assert rows[0]["NF_reason"] == "ZBNF is the central topic"
+    assert rows[0]["Database"] == "AGRIS"
     assert list(rows[0].keys()) == ["Corpus ID", "Authors", "Year", "Title", "DOI",
-                                     "India_confidence", "India_reason",
+                                     "Database", "India_confidence", "India_reason",
                                      "NF_confidence", "NF_reason"]
 
 def test_write_excluded_csv(tmp_path):
@@ -278,6 +302,7 @@ def test_write_social_csv(tmp_path):
     papers = [{
         "Corpus ID": "5", "Authors": "Kumar R.", "Year": "2023",
         "Title": "Women and ZBNF in Andhra Pradesh", "DOI": "10.9999/z",
+        "Database": "Web of Science",
         "India_confidence": "high", "India_reason": "Andhra Pradesh study",
         "NF_confidence": "high", "NF_reason": "ZBNF is the central topic",
         "Abstract": "Should not appear",
@@ -289,8 +314,10 @@ def test_write_social_csv(tmp_path):
     assert len(rows) == 1
     assert rows[0]["Social_confidence"] == "high"
     assert rows[0]["Social_reason"] == "Gender roles are the central focus"
+    assert rows[0]["Database"] == "Web of Science"
     assert "Abstract" not in rows[0]
     assert list(rows[0].keys()) == SOCIAL_FIELDS
+    assert "Database" in SOCIAL_FIELDS
 
 def test_count_csv_rows(tmp_path):
     p = tmp_path / "data.csv"
@@ -308,6 +335,23 @@ def test_count_cache_entries(tmp_path):
 def test_count_cache_entries_missing_file(tmp_path):
     assert count_cache_entries(str(tmp_path / "missing.jsonl")) == 0
 
+def test_db_counts():
+    rows = [{"Database": "Scopus"}, {"Database": "AGRIS"}, {"Database": "Scopus"}]
+    assert db_counts(rows) == {"Scopus": 2, "AGRIS": 1}
+
+def test_csv_db_counts(tmp_path):
+    p = tmp_path / "out.csv"
+    p.write_text("Corpus ID,Database\n1,Scopus\n2,AGRIS\n3,Scopus\n")
+    assert csv_db_counts(str(p)) == {"Scopus": 2, "AGRIS": 1}
+
+def test_csv_db_counts_missing_column(tmp_path):
+    p = tmp_path / "out.csv"
+    p.write_text("Corpus ID,Title\n1,A\n")
+    assert csv_db_counts(str(p)) == {}
+
+def test_csv_db_counts_missing_file(tmp_path):
+    assert csv_db_counts(str(tmp_path / "missing.csv")) == {}
+
 def test_format_funnel_contains_all_counts():
     funnel = {
         "total_read": 100, "removed_title_year": 10, "removed_doi": 5,
@@ -320,6 +364,41 @@ def test_format_funnel_contains_all_counts():
     for expected in ["100", "10", "5", "15", "70", "20", "48", "2", "8", "11", "1"]:
         assert expected in text, f"Expected '{expected}' in funnel summary"
     assert "Social" not in text
+    assert "by database" not in text
+
+def test_format_funnel_by_database_lines():
+    funnel = {
+        "total_read": 100, "removed_title_year": 10, "removed_doi": 5,
+        "removed_no_abstract": 15, "to_classify": 70,
+        "india_relevant": 20, "india_not_relevant": 48, "india_errors": 2,
+        "nf_relevant": 8, "nf_not_relevant": 11, "nf_errors": 1,
+        "db_total_read": {"AGRIS": 60, "Scopus": 40},
+        "db_to_classify": {"Scopus": 40, "AGRIS": 30},
+        "db_india": {"Scopus": 12, "AGRIS": 8},
+        "db_nf": {"AGRIS": 5, "Scopus": 3},
+    }
+    text = "\n".join(format_funnel(funnel))
+    # one breakdown line per stage, databases sorted by count descending
+    assert "by database: AGRIS 60, Scopus 40" in text
+    assert "by database: Scopus 40, AGRIS 30" in text
+    assert "by database: Scopus 12, AGRIS 8" in text
+    assert "by database: AGRIS 5, Scopus 3" in text
+
+def test_format_funnel_by_database_social():
+    funnel = {
+        "total_read": 100, "removed_title_year": 0, "removed_doi": 0,
+        "removed_no_abstract": 0, "to_classify": 100,
+        "india_relevant": 40, "india_not_relevant": 60, "india_errors": 0,
+        "nf_relevant": 20, "nf_not_relevant": 20, "nf_errors": 0,
+        "social_relevant": 7, "social_not_relevant": 13, "social_errors": 0,
+        "db_social": {"Scopus": 4, "AGRIS": 3},
+    }
+    lines = format_funnel(funnel)
+    text = "\n".join(lines)
+    assert "by database: Scopus 4, AGRIS 3" in text
+    # breakdown follows the shortlist line it describes
+    idx = lines.index("  by database: Scopus 4, AGRIS 3")
+    assert "Social dimensions shortlist" in lines[idx - 1]
 
 def test_format_funnel_includes_social_when_present():
     funnel = {

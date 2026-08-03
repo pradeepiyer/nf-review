@@ -129,9 +129,9 @@ Respond with a JSON object:
 
 # ── OUTPUT SCHEMAS ────────────────────────────────────────────────────────────
 
-INDIA_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "India_confidence", "India_reason"]
-NF_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "India_confidence", "India_reason", "NF_confidence", "NF_reason"]
-SOCIAL_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "India_confidence", "India_reason", "NF_confidence", "NF_reason", "Social_confidence", "Social_reason"]
+INDIA_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "Database", "India_confidence", "India_reason"]
+NF_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "Database", "India_confidence", "India_reason", "NF_confidence", "NF_reason"]
+SOCIAL_FIELDS = ["Corpus ID", "Authors", "Year", "Title", "DOI", "Database", "India_confidence", "India_reason", "NF_confidence", "NF_reason", "Social_confidence", "Social_reason"]
 EXCLUDED_FIELDS = ["Corpus ID", "Title", "Year", "Stage", "Reason"]
 
 # ── PREPROCESSING ─────────────────────────────────────────────────────────────
@@ -211,6 +211,8 @@ def load_and_preprocess(path=PAPERS_FILE):
         "removed_doi": removed_doi,
         "removed_no_abstract": removed_noabs,
         "to_classify": len(with_abs),
+        "db_total_read": db_counts(rows),
+        "db_to_classify": db_counts(with_abs),
     }
     return with_abs, funnel, excluded
 
@@ -276,6 +278,22 @@ def write_excluded_csv(excluded, path=EXCLUDED_OUT):
         writer.writeheader()
         writer.writerows(excluded)
 
+def db_counts(rows):
+    counts = {}
+    for row in rows:
+        db = (row.get("Database") or "").strip()
+        counts[db] = counts.get(db, 0) + 1
+    return counts
+
+def csv_db_counts(path):
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames or "Database" not in reader.fieldnames:
+            return {}
+        return db_counts(reader)
+
 def count_csv_rows(path):
     if not os.path.exists(path):
         return 0
@@ -309,32 +327,45 @@ def build_funnel_from_files():
         "nf_relevant": nf_relevant,
         "nf_not_relevant": nf_cached - nf_relevant,
         "nf_errors": india_relevant - nf_cached,
+        "db_india": csv_db_counts(INDIA_OUT),
+        "db_nf": csv_db_counts(NF_OUT),
     })
     return funnel
 
 def format_funnel(funnel):
     def val(key):
         return str(funnel.get(key, "N/A"))
+    def db_line(key):
+        counts = funnel.get(key)
+        if not counts:
+            return []
+        items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        return ["  by database: " + ", ".join(f"{db} {n}" for db, n in items)]
     lines = [
         "PRISMA Funnel Summary",
         "=" * 42,
         f"Total papers read:                {val('total_read')}",
+        *db_line("db_total_read"),
         f"  - Duplicate (Title, Year):      -{val('removed_title_year')}",
         f"  - Duplicate (DOI):              -{val('removed_doi')}",
         f"  - No abstract:                  -{val('removed_no_abstract')}",
         f"Papers to classify (India):       {val('to_classify')}",
+        *db_line("db_to_classify"),
         f"  - India: not relevant:          -{val('india_not_relevant')}",
         f"  - India: errors (retry):        {val('india_errors')}",
         f"India-relevant:                   {val('india_relevant')}",
+        *db_line("db_india"),
         f"  - Natural farming: not rel:     -{val('nf_not_relevant')}",
         f"  - Natural farming: errors:      {val('nf_errors')}",
         f"Natural farming shortlist:        {val('nf_relevant')}",
+        *db_line("db_nf"),
     ]
     if "social_relevant" in funnel:
         lines += [
             f"  - Social dimensions: not rel:   -{val('social_not_relevant')}",
             f"  - Social dimensions: errors:    {val('social_errors')}",
             f"Social dimensions shortlist:      {val('social_relevant')}",
+            *db_line("db_social"),
         ]
     return lines
 
@@ -439,6 +470,7 @@ async def async_main(smoke=False, social=False):
             "social_relevant": len(social_papers),
             "social_not_relevant": len(social_excluded),
             "social_errors": social_errors,
+            "db_social": db_counts(social_papers),
         })
         existing_excluded = []
         if os.path.exists(EXCLUDED_OUT):
@@ -471,6 +503,7 @@ async def async_main(smoke=False, social=False):
         "india_relevant": len(india_papers),
         "india_not_relevant": len(india_excluded),
         "india_errors": india_errors,
+        "db_india": db_counts(india_papers),
     })
 
     if smoke:
@@ -501,6 +534,7 @@ async def async_main(smoke=False, social=False):
         "nf_relevant": len(nf_papers),
         "nf_not_relevant": len(nf_excluded),
         "nf_errors": nf_errors,
+        "db_nf": db_counts(nf_papers),
     })
 
     all_excluded = preprocessing_excluded + india_excluded + nf_excluded

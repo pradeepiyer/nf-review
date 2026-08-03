@@ -1,16 +1,21 @@
 PRISMA Funnel Summary
 ==========================================
 Total papers read:                7364
+  by database: AGRIS 4587, Scopus 1518, Web of Science 1000, Zotero 199, CABI 60
   - Duplicate (Title, Year):      -437
   - Duplicate (DOI):              -39
   - No abstract:                  -1419
 Papers to classify (India):       5469
+  by database: AGRIS 3086, Scopus 1459, Web of Science 777, Zotero 87, CABI 60
   - India: not relevant:          -4586
   - India: errors (retry):        0
 India-relevant:                   883
+  by database: Scopus 537, AGRIS 153, Web of Science 98, Zotero 82, CABI 13
   - Natural farming: not rel:     -102
   - Natural farming: errors:      0
 Natural farming shortlist:        781
+  by database: Scopus 451, AGRIS 149, Web of Science 86, Zotero 82, CABI 13
   - Social dimensions: not rel:   -474
   - Social dimensions: errors:    0
 Social dimensions shortlist:      307
+  by database: Scopus 201, Zotero 52, AGRIS 43, Web of Science 9, CABI 2
